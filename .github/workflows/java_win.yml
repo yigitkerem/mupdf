@@ -1,0 +1,62 @@
+name: Build Windows Java package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows Java package
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build JNI library
+        shell: pwsh
+        run: |
+          msbuild platform\win32\javaviewerlib.vcxproj `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64
+
+      - name: Package build/java/release
+        shell: pwsh
+        run: |
+          $release = "build\java\release"
+          New-Item -ItemType Directory -Force $release | Out-Null
+
+          Copy-Item platform\win32\x64\Release\*.dll $release
+          Copy-Item platform\win32\x64\Release\javaviewerlib64.dll "$release\mupdf_java.dll"
+          Copy-Item platform\win32\x64\Release\javaviewerlib64.dll "$release\mupdf_java64.dll"
+          if (Test-Path platform\win32\x64\Release\javaviewerlib64.pdb) {
+            Copy-Item platform\win32\x64\Release\javaviewerlib64.pdb "$release\mupdf_java64.pdb"
+          }
+
+          $librarySources = Get-ChildItem platform\java\src\com\artifex\mupdf\fitz\*.java
+          $exampleSources = Get-ChildItem platform\java\example\*.java
+          javac -source 8 -target 8 -d $release $librarySources.FullName
+          javac -source 8 -target 8 -classpath $release -d $release $exampleSources.FullName
+          jar cf "$release\libmupdf.jar" -C $release com
+
+          Get-ChildItem $release -Recurse | Select-Object FullName, Length
+
+      - name: Upload build/java/release
+        uses: actions/upload-artifact@v4
+        with:
+          name: mupdf-java-windows-x64-release
+          path: build/java/release
+          if-no-files-found: error
